@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"log"
 	"os"
@@ -89,10 +90,11 @@ func initEnv() {
 		log.Fatal("zone nor cftoken nor redispass is empty")
 	}
 	rdb = redis.NewClient(&redis.Options{
-		Addr:     redisHost,
-		Username: "cfsync",
-		Password: redispass, // no password set
-		DB:       0,         // use default DB
+		Addr:      redisHost,
+		Username:  "cfsync",
+		Password:  redispass, // no password set
+		DB:        0,         // use default DB
+		TLSConfig: &tls.Config{},
 	})
 }
 
@@ -120,6 +122,9 @@ func main() {
 		log.Fatal("failed to get ipv6", err)
 	}
 	log.Println("ipv6 address:", ip)
+	if len(ip) < 1 {
+		log.Fatal("not a good ipv6")
+	}
 	judgeIfShouldUpdate(ip)
 	ids, err := listRecords()
 	if err != nil {
