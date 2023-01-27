@@ -1,21 +1,29 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/json"
 	"log"
 	"os"
 	"sync"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // const endpoint4 = "http://ip1.dynupdate.no-ip.com"
 const endpoint6 = "http://ip1.dynupdate6.no-ip.com"
+const redisHost = "redis.appsite.top:6379"
+const redisIpv6Key = "cfsync:ipv6"
 
 const baseUrl = "https://api.cloudflare.com/client/v4/zones/"
 
-var zone string
-var token string
+var cfzone string
+var cftoken string
+var redispass string
+var ctx = context.Background()
+var rdb *redis.Client
 
 func getIp() (string, error) {
 	client := resty.New()
@@ -33,8 +41,8 @@ func listRecords() ([]string, error) {
 	var res ListRecords
 	ids := make([]string, 0)
 	client := resty.New().
-		SetBaseURL(baseUrl + zone).
-		SetAuthToken(token)
+		SetBaseURL(baseUrl + cfzone).
+		SetAuthToken(cftoken)
 	_, err := client.R().SetResult(&res).Get("/dns_records")
 	if err != nil {
 		log.Fatalf(err.Error())
@@ -53,8 +61,8 @@ func updateRecords(id string, ip string, wg *sync.WaitGroup) {
 	defer wg.Done()
 	log.Println("patch", id)
 	client := resty.New().
-		SetBaseURL(baseUrl + zone + "/dns_records").
-		SetAuthToken(token)
+		SetBaseURL(baseUrl + cfzone + "/dns_records").
+		SetAuthToken(cftoken)
 
 	patchByte, _ := json.Marshal(PatchBody{
 		Content: ip,
@@ -74,10 +82,36 @@ func updateRecords(id string, ip string, wg *sync.WaitGroup) {
 }
 
 func initEnv() {
-	zone = os.Getenv("ZONE")
-	token = os.Getenv("TOKEN")
-	if !(len(zone) > 0 && len(token) > 0) {
-		log.Fatal("zone nor token is empty")
+	cfzone = os.Getenv("CFZONE")
+	cftoken = os.Getenv("CFTOKEN")
+	redispass = os.Getenv("REDISPASS")
+	if len(cfzone) < 1 || len(cftoken) < 1 || len(redispass) < 1 {
+		log.Printf("cfzone: %s cftoken: %s redispass %s", cfzone, cftoken, redispass)
+		log.Fatal("zone nor cftoken nor redispass is empty")
+	}
+	rdb = redis.NewClient(&redis.Options{
+		Addr:      redisHost,
+		Username:  "cfsync",
+		Password:  redispass, // no password set
+		DB:        0,         // use default DB
+		TLSConfig: &tls.Config{},
+	})
+}
+
+func judgeIfShouldUpdate(ip string) {
+	val, err := rdb.Get(ctx, redisIpv6Key).Result()
+	if err == redis.Nil {
+		rdb.Set(ctx, redisIpv6Key, ip, 0)
+	} else {
+		if err != nil {
+			log.Fatal("redis error:", err)
+		}
+		if val == ip {
+			log.Printf("same ip %s, skip update cloudflare", ip)
+			os.Exit(0)
+		} else {
+			rdb.Set(ctx, redisIpv6Key, ip, 0)
+		}
 	}
 }
 
@@ -87,7 +121,8 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to get ipv6", err)
 	}
-	log.Println(ip)
+	log.Println("ipv6 address:", ip)
+	judgeIfShouldUpdate(ip)
 	ids, err := listRecords()
 	if err != nil {
 		log.Println(err)
