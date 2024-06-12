@@ -14,7 +14,9 @@ import (
 
 // const endpoint4 = "http://ip1.dynupdate.no-ip.com"
 const endpoint6 = "http://ip1.dynupdate6.no-ip.com"
-const redisHost = "redis.appsite.top:6379"
+
+// cluster redis service
+const redisHost = "redis-master.redis:6379"
 const redisIpv6Key = "cfsync:ipv6"
 
 const baseUrl = "https://api.cloudflare.com/client/v4/zones/"
